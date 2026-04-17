@@ -76,20 +76,35 @@ function NCLModel(
   # construct meta
   nx = nlp.meta.nvar
   nvar = nx + nr
+  nlin = nlp.meta.nlin
+  nnln = nlp.meta.nnln
+  lin_nnzj = nlp.meta.lin_nnzj + (resid_linear ? nlin : 0)
+  nln_nnzj = nlp.meta.nln_nnzj + nnln
   meta = NLPModelMeta{T, S}(
-    nvar;
+    nvar,
     lvar = vcat(nlp.meta.lvar, fill!(similar(nlp.meta.x0, nr), -Inf)),  # no bounds on residuals
     uvar = vcat(nlp.meta.uvar, fill!(similar(nlp.meta.x0, nr), Inf)),
     x0 = vcat(nlp.meta.x0, fill!(similar(nlp.meta.x0, nr), resid)),
     y0 = nlp.meta.y0,
     name = "NCL-" * nlp.meta.name,
-    nnzj = nlp.meta.nnzj + nr,
+    lin_nnzj = lin_nnzj,
+    nln_nnzj = nln_nnzj,
+    nnzj = lin_nnzj + nln_nnzj,
+    lin = nlp.meta.lin,  # nln is automatically computed
     nnzh = nlp.meta.nnzh + nr,
     ncon = nlp.meta.ncon,
     lcon = nlp.meta.lcon,
     ucon = nlp.meta.ucon,
     minimize = true,  # nlp.meta.minimize,
-    # TODO: define nln, etc.
+    islp = false,
+    sparse_jacobian = nlp.meta.sparse_jacobian,
+    sparse_hessian = nlp.meta.sparse_hessian,
+    grad_available = nlp.meta.grad_available,
+    jac_available = nlp.meta.jac_available,
+    hess_available = nlp.meta.hess_available,
+    jprod_available = nlp.meta.jprod_available,
+    jtprod_available = nlp.meta.jtprod_available,
+    hprod_available = nlp.meta.hprod_available,
   )
 
   nlp.meta.minimize || error("only minimization problems are currently supported")
@@ -97,6 +112,7 @@ function NCLModel(
 end
 
 function NLPModels.obj(ncl::NCLModel{T, S, M}, xr::S) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr
   increment!(ncl, :neval_obj)
   x = view(xr, 1:(ncl.nx))
   r = view(xr, (ncl.nx + 1):(ncl.nx + ncl.nr))
@@ -112,6 +128,7 @@ function NLPModels.grad!(
   xr::S,
   gx::S,
 ) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr gx
   increment!(ncl, :neval_grad)
   x = view(xr, 1:(ncl.nx))
   orig_gx = view(gx, 1:(ncl.nx))
@@ -128,6 +145,7 @@ function NLPModels.hess_structure!(
   hrows::AbstractVector{<:Integer},
   hcols::AbstractVector{<:Integer},
 ) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nnzh(ncl) hrows hcols
   increment!(ncl, :neval_hess)
   orig_nnzh = ncl.nlp.meta.nnzh
   orig_hrows = view(hrows, 1:orig_nnzh)
@@ -141,20 +159,22 @@ end
 
 function NLPModels.hess_coord!(
   ncl::NCLModel{T, S, M},
-  xr::S,
-  hvals::S;
+  xr::AbstractVector,
+  hvals::AbstractVector;
   obj_weight::T = one(T),
 ) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr
+  @lencheck get_nnzh(ncl) hvals
   increment!(ncl, :neval_hess)
   nnzh = ncl.meta.nnzh
   orig_nnzh = ncl.nlp.meta.nnzh
   x = view(xr, 1:(ncl.nx))
   orig_hvals = view(hvals, 1:orig_nnzh)
   hess_coord!(ncl.nlp, x, orig_hvals; obj_weight = obj_weight)
-  ncl.nlp.meta.minimize || (hvals[1:orig_nnzh] .*= -1)
-  hvals[(orig_nnzh + 1):nnzh] .= ncl.ρ
+  # ncl.nlp.meta.minimize || (hvals[1:orig_nnzh] .*= -1)
+  hvals[(orig_nnzh + 1):nnzh] .= ncl.ρ * obj_weight
   # if ncl.meta.minimize
-  #   hvals[orig_nnzh + 1 : nnzh] .= ncl.ρ
+  # hvals[(orig_nnzh + 1):nnzh] .= ncl.ρ
   # else
   #   hvals[orig_nnzh + 1 : nnzh] .= -ncl.ρ
   # end
@@ -163,21 +183,24 @@ end
 
 function NLPModels.hess_coord!(
   ncl::NCLModel{T, S, M},
-  xr::S,
-  y::S,
-  hvals::S;
+  xr::AbstractVector,
+  y::AbstractVector,
+  hvals::AbstractVector;
   obj_weight::T = one(T),
 ) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr
+  @lencheck get_ncon(ncl) y
+  @lencheck get_nnzh(ncl) hvals
   increment!(ncl, :neval_hess)
   nnzh = ncl.meta.nnzh
   orig_nnzh = ncl.nlp.meta.nnzh
   x = view(xr, 1:(ncl.nx))
   orig_hvals = view(hvals, 1:orig_nnzh)
   hess_coord!(ncl.nlp, x, y, orig_hvals; obj_weight = obj_weight)
-  ncl.nlp.meta.minimize || (hvals[1:orig_nnzh] .*= -1)
-  hvals[(orig_nnzh + 1):nnzh] .= ncl.ρ
+  # ncl.nlp.meta.minimize || (hvals[1:orig_nnzh] .*= -1)
+  hvals[(orig_nnzh + 1):nnzh] .= ncl.ρ * obj_weight
   # if ncl.meta.minimize
-  #   hvals[orig_nnzh + 1 : nnzh] .= ncl.ρ
+  # hvals[(orig_nnzh + 1):nnzh] .= ncl.ρ
   # else
   #   hvals[orig_nnzh + 1 : nnzh] .= -ncl.ρ
   # end
@@ -186,19 +209,24 @@ end
 
 function NLPModels.hprod!(
   ncl::NCLModel{T, S, M},
-  xr::S,
-  v::S,
-  hv::S;
+  xr::AbstractVector,
+  v::AbstractVector,
+  hv::AbstractVector;
   obj_weight::T = one(T),
 ) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr v hv
   increment!(ncl, :neval_hprod)
   x = view(xr, 1:(ncl.nx))
   orig_hv = view(hv, 1:(ncl.nx))
   hprod!(ncl.nlp, x, view(v, 1:(ncl.nx)), orig_hv; obj_weight = obj_weight)
-  ncl.nlp.meta.minimize || (orig_hv .*= -1)
-  hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= ncl.ρ * v[(ncl.nx + 1):(ncl.nx + ncl.nr)]
+  # ncl.nlp.meta.minimize || (orig_hv .*= -1)
+  if obj_weight == zero(T)
+    hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= 0
+  else
+    hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= obj_weight * ncl.ρ * v[(ncl.nx + 1):(ncl.nx + ncl.nr)]
+  end
   # if ncl.meta.minimize
-  #   hv[ncl.nx + 1 : ncl.nx + ncl.nr] .= ncl.ρ * v[ncl.nx + 1 : ncl.nx + ncl.nr]
+  # hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= ncl.ρ * v[(ncl.nx + 1):(ncl.nx + ncl.nr)]
   # else
   #   hv[ncl.nx + 1 : ncl.nx + ncl.nr] .= -ncl.ρ * v[ncl.nx + 1 : ncl.nx + ncl.nr]
   # end
@@ -207,18 +235,24 @@ end
 
 function NLPModels.hprod!(
   ncl::NCLModel{T, S, M},
-  xr::S,
-  y::S,
-  v::S,
-  hv::S;
+  xr::AbstractVector,
+  y::AbstractVector,
+  v::AbstractVector,
+  hv::AbstractVector;
   obj_weight::T = one(T),
 ) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr v hv
+  @lencheck get_ncon(ncl) y
   increment!(ncl, :neval_hprod)
   x = view(xr, 1:(ncl.nx))
   orig_hv = view(hv, 1:(ncl.nx))
   hprod!(ncl.nlp, x, y, view(v, 1:(ncl.nx)), orig_hv; obj_weight = obj_weight)
-  ncl.nlp.meta.minimize || (orig_hv .*= -1)
-  hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= ncl.ρ * v[(ncl.nx + 1):(ncl.nx + ncl.nr)]
+  # ncl.nlp.meta.minimize || (orig_hv .*= -1)
+  if obj_weight == zero(T)
+    hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= 0
+  else
+    hv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= obj_weight * ncl.ρ * v[(ncl.nx + 1):(ncl.nx + ncl.nr)]
+  end
   # if ncl.meta.minimize
   #   hv[ncl.nx + 1 : ncl.nx + ncl.nr] .= ncl.ρ * v[ncl.nx + 1 : ncl.nx + ncl.nr]
   # else
@@ -227,82 +261,192 @@ function NLPModels.hprod!(
   return hv
 end
 
-function NLPModels.cons!(
+function NLPModels.cons_lin!(
   ncl::NCLModel{T, S, M},
   xr::AbstractVector,
   cx::AbstractVector,
 ) where {T, S, M <: AbstractNLPModel{T, S}}
-  increment!(ncl, :neval_cons)
+  @lencheck get_nvar(ncl) xr
+  @lencheck get_nlin(ncl) cx
+  increment!(ncl, :neval_cons_lin)
   x = view(xr, 1:(ncl.nx))
-  cons!(ncl.nlp, x, cx)
-  r = view(xr, (ncl.nx + 1):(ncl.nx + ncl.nr))
+  cons_lin!(ncl.nlp, x, cx)
   if ncl.resid_linear
-    cx .+= r
-  else
-    cx[ncl.nlp.meta.nln] .+= r
+    r = view(xr, (ncl.nx + 1):(ncl.nx + ncl.nr))
+    cx .+= view(r, ncl.meta.lin)
   end
   return cx
 end
 
-function NLPModels.jac_structure!(
+function NLPModels.cons_nln!(
+  ncl::NCLModel{T, S, M},
+  xr::AbstractVector,
+  cx::AbstractVector,
+) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr
+  @lencheck get_nnln(ncl) cx
+  increment!(ncl, :neval_cons_nln)
+  x = view(xr, 1:(ncl.nx))
+  cons_nln!(ncl.nlp, x, cx)
+  r = view(xr, (ncl.nx + 1):(ncl.nx + ncl.nr))
+  if ncl.resid_linear
+    cx .+= view(r, ncl.meta.nln)
+  else
+    cx .+= r
+  end
+  return cx
+end
+
+function NLPModels.jac_lin_structure!(
   ncl::NCLModel{T, S, M},
   jrows::AbstractVector{<:Integer},
   jcols::AbstractVector{<:Integer},
 ) where {T, S, M <: AbstractNLPModel{T, S}}
-  increment!(ncl, :neval_jac)
-  orig_nnzj = ncl.nlp.meta.nnzj
-  orig_jrows = view(jrows, 1:orig_nnzj)
-  orig_jcols = view(jcols, 1:orig_nnzj)
-  jac_structure!(ncl.nlp, orig_jrows, orig_jcols)
-  nnzj = ncl.meta.nnzj
-  jrows[(orig_nnzj + 1):nnzj] .= ncl.resid_linear ? (1:(ncl.meta.ncon)) : ncl.nlp.meta.nln
-  jcols[(orig_nnzj + 1):nnzj] .= (ncl.nx + 1):(ncl.meta.nvar)
+  @lencheck get_lin_nnzj(ncl) jrows jcols
+  increment!(ncl, :neval_jac_lin)
+  orig_lin_nnzj = ncl.nlp.meta.lin_nnzj
+  orig_jrows = view(jrows, 1:orig_lin_nnzj)
+  orig_jcols = view(jcols, 1:orig_lin_nnzj)
+  jac_lin_structure!(ncl.nlp, orig_jrows, orig_jcols)
+  if ncl.resid_linear
+    lin_nnzj = ncl.meta.lin_nnzj  # = orig_lin_nnzj + nlin
+    jrows[(orig_lin_nnzj + 1):lin_nnzj] .= 1:ncl.meta.nlin
+    @. jcols[(orig_lin_nnzj + 1):lin_nnzj] = ncl.nx + (1:ncl.meta.nlin)
+  end
   return jrows, jcols
 end
 
-function NLPModels.jac_coord!(
+function NLPModels.jac_nln_structure!(
+  ncl::NCLModel{T, S, M},
+  jrows::AbstractVector{<:Integer},
+  jcols::AbstractVector{<:Integer},
+) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nln_nnzj(ncl) jrows jcols
+  increment!(ncl, :neval_jac_nln)
+  orig_nln_nnzj = ncl.nlp.meta.nln_nnzj
+  orig_jrows = view(jrows, 1:orig_nln_nnzj)
+  orig_jcols = view(jcols, 1:orig_nln_nnzj)
+  jac_nln_structure!(ncl.nlp, orig_jrows, orig_jcols)
+  nln_nnzj = ncl.meta.nln_nnzj
+  jrows[(orig_nln_nnzj + 1):nln_nnzj] .= 1:ncl.meta.nnln
+  if ncl.resid_linear
+    @. jcols[(orig_nln_nnzj + 1):nln_nnzj] = ncl.nx + ncl.meta.nlin + (1:ncl.meta.nnln)
+  else
+    @. jcols[(orig_nln_nnzj + 1):nln_nnzj] = ncl.nx + (1:ncl.meta.nnln)
+  end
+  return jrows, jcols
+end
+
+function NLPModels.jac_lin_coord!(
   ncl::NCLModel{T, S, M},
   xr::AbstractVector,
   jvals::AbstractVector,
 ) where {T, S, M <: AbstractNLPModel{T, S}}
-  increment!(ncl, :neval_jac)
-  orig_nnzj = ncl.nlp.meta.nnzj
-  orig_jvals = view(jvals, 1:orig_nnzj)
+  @lencheck get_nvar(ncl) xr
+  @lencheck get_lin_nnzj(ncl) jvals
+  increment!(ncl, :neval_jac_lin)
+  orig_lin_nnzj = ncl.nlp.meta.lin_nnzj
+  orig_jvals = view(jvals, 1:orig_lin_nnzj)
   x = view(xr, 1:(ncl.nx))
-  jac_coord!(ncl.nlp, x, orig_jvals)
-  jvals[(orig_nnzj + 1):(ncl.meta.nnzj)] .= 1
+  jac_lin_coord!(ncl.nlp, x, orig_jvals)
+  if ncl.resid_linear
+    jvals[(orig_lin_nnzj + 1):ncl.meta.lin_nnzj] .= 1
+  end
   return jvals
 end
 
-function NLPModels.jprod!(
+function NLPModels.jac_nln_coord!(
   ncl::NCLModel{T, S, M},
-  xr::S,
-  v::S,
-  Jv::S,
+  xr::AbstractVector,
+  jvals::AbstractVector,
 ) where {T, S, M <: AbstractNLPModel{T, S}}
-  increment!(ncl, :neval_jprod)
+  @lencheck get_nvar(ncl) xr
+  @lencheck get_nln_nnzj(ncl) jvals
+  increment!(ncl, :neval_jac_nln)
+  orig_nln_nnzj = ncl.nlp.meta.nln_nnzj
+  orig_jvals = view(jvals, 1:orig_nln_nnzj)
+  x = view(xr, 1:(ncl.nx))
+  jac_nln_coord!(ncl.nlp, x, orig_jvals)
+  jvals[(orig_nln_nnzj + 1):ncl.meta.nln_nnzj] .= 1
+  return jvals
+end
+
+function NLPModels.jprod_lin!(
+  ncl::NCLModel{T, S, M},
+  xr::AbstractVector,
+  v::AbstractVector,
+  Jv::AbstractVector,
+) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr v
+  @lencheck get_nlin(ncl) Jv
+  increment!(ncl, :neval_jprod_lin)
   x = view(xr, 1:(ncl.nx))
   vx = view(v, 1:(ncl.nx))
-  jprod!(ncl.nlp, x, vx, Jv)
+  jprod_lin!(ncl.nlp, x, vx, Jv)
   vr = view(v, (ncl.nx + 1):(ncl.nx + ncl.nr))
   if ncl.resid_linear
-    Jv .+= vr
-  else
-    Jv[ncl.nlp.meta.nln] .+= vr
+    vr_lin = view(vr, ncl.meta.lin)
+    Jv .+= vr_lin
   end
   return Jv
 end
 
-function NLPModels.jtprod!(
+function NLPModels.jprod_nln!(
   ncl::NCLModel{T, S, M},
-  xr::S,
-  v::S,
-  Jtv::S,
+  xr::AbstractVector,
+  v::AbstractVector,
+  Jv::AbstractVector,
 ) where {T, S, M <: AbstractNLPModel{T, S}}
-  increment!(ncl, :neval_jtprod)
+  @lencheck get_nvar(ncl) xr v
+  @lencheck get_nnln(ncl) Jv
+  increment!(ncl, :neval_jprod_nln)
+  x = view(xr, 1:(ncl.nx))
+  vx = view(v, 1:(ncl.nx))
+  jprod_nln!(ncl.nlp, x, vx, Jv)
+  vr = view(v, (ncl.nx + 1):(ncl.nx + ncl.nr))
+  vr_nl = ncl.resid_linear ? view(vr, ncl.meta.nln) : vr
+  Jv .+= vr_nl
+  return Jv
+end
+
+function NLPModels.jtprod_lin!(
+  ncl::NCLModel{T, S, M},
+  xr::AbstractVector,
+  v::AbstractVector,
+  Jtv::AbstractVector,
+) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr Jtv
+  @lencheck get_nlin(ncl) v
+  increment!(ncl, :neval_jtprod_lin)
   x = view(xr, 1:(ncl.nx))
   orig_Jtv = view(Jtv, 1:(ncl.nx))
-  jtprod!(ncl.nlp, x, v, orig_Jtv)
-  Jtv[(ncl.nx + 1):(ncl.meta.nvar)] .= (ncl.resid_linear) ? v : v[ncl.nlp.meta.nln]
+  jtprod_lin!(ncl.nlp, x, v, orig_Jtv)
+  if ncl.resid_linear
+    Jtv[ncl.nx .+ ncl.meta.lin] .= v
+    Jtv[ncl.nx .+ ncl.meta.nln] .= 0
+  else
+    Jtv[(ncl.nx + 1):(ncl.nx + ncl.nr)] .= 0
+  end
+  return Jtv
+end
+
+function NLPModels.jtprod_nln!(
+  ncl::NCLModel{T, S, M},
+  xr::AbstractVector,
+  v::AbstractVector,    # v has length nnln
+  Jtv::AbstractVector,  # Jtv has length nvar = nx + nr
+) where {T, S, M <: AbstractNLPModel{T, S}}
+  @lencheck get_nvar(ncl) xr Jtv
+  @lencheck get_nnln(ncl) v
+  increment!(ncl, :neval_jtprod_nln)
+  x = view(xr, 1:(ncl.nx))
+  orig_Jtv = view(Jtv, 1:(ncl.nx))
+  jtprod_nln!(ncl.nlp, x, v, orig_Jtv)
+  if ncl.resid_linear
+    Jtv[ncl.nx .+ ncl.meta.lin] .= 0
+    Jtv[ncl.nx .+ ncl.meta.nln] .= v
+  else
+    Jtv[(ncl.nx + 1):(ncl.nx + ncl.meta.nnln)] .= v
+  end
   return Jtv
 end
