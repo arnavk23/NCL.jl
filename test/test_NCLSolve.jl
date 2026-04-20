@@ -1,6 +1,7 @@
 @testset "No solver by default" begin
   @test_throws ErrorException IpoptNCLSubSolver()
   @test_throws ErrorException KnitroNCLSubSolver()
+  @test_throws ErrorException MadNLPNCLSubSolver()
 end
 
 using NLPModelsIpopt
@@ -39,9 +40,26 @@ end
   infeas_model = ADNLPModel(f, x0, lvar, uvar, c, lcon, ucon; name = "infeasible-rho-max")
 
   ncl_model = NCLModel(infeas_model; resid_linear = false)
-  stats = NCLSolve(ncl_model, solver = :ipopt, verbose = false)
+  stats = NCLSolve(ncl_model, verbose = false)
 
   @test stats.status == :infeasible
   @test get(stats.solver_specific, :internal_msg, nothing) == :Solve_Failed
   @test maximum(abs, get(stats.solver_specific, :residuals, [0.0])) > 1.0e-6
+end
+
+using MadNLP
+
+@testset "MadNLP solver available" begin
+  model = hs16()
+  ncl_model = NCLModel(model)
+  sub = MadNLPNCLSubSolver(ncl_model)
+  @test NCL.name(sub) == "MadNLP"
+end
+
+@testset "Simple solve with MadNLP" begin
+  model = hs16()
+  ncl_model = NCLModel(model)
+  sub = MadNLPNCLSubSolver(ncl_model)
+  stats = NCLSolve(ncl_model, subsolver = sub, verbose = false)
+  @test stats.status == :first_order
 end
