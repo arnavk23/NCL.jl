@@ -1,3 +1,13 @@
+"""
+  NCL
+
+NCL (nonlinearly constrained augmented Lagrangian) is a pure Julia implementation
+of Algorithm NCL for nonlinear optimization with constraints.
+
+Given a nonlinear model that implements the `NLPModels` API, NCL introduces
+residual variables and solves a sequence of penalty subproblems with an inner
+solver such as IPOPT or KNITRO.
+"""
 module NCL
 
 using LinearAlgebra

@@ -1,6 +1,32 @@
 export NCLSolve
 
 # TODO: avoid infinite loop due to NCLModel not being generated
+"""
+  NCLSolve(nlp::AbstractNLPModel; kwargs...)
+  NCLSolve(ncl::NCLModel; kwargs...)
+
+Solve a constrained nonlinear optimization problem with the NCL algorithm.
+
+Passing an `AbstractNLPModel` automatically wraps it as `NCLModel(nlp)`. Passing
+an existing `NCLModel` allows you to control the transformed model directly
+(initial residuals, multiplier estimate, penalty parameter, etc.).
+
+### Main keyword arguments
+
+* `opt_tol::Float64=1.0e-6`: target dual feasibility tolerance.
+* `feas_tol::Float64=1.0e-6`: target primal feasibility tolerance.
+* `max_iter_NCL::Int=20`: maximum number of outer NCL iterations.
+* `solver`: inner solver symbol (`:ipopt` or `:knitro`) among loaded extensions.
+* `verbose::Bool=true`: print outer-iteration log.
+
+Any additional keyword argument is forwarded to the selected inner solver.
+
+### Return value
+
+Returns `GenericExecutionStats` for the original NLP model. The field
+`stats.solver_specific[:residuals]` stores residual variables from the last
+outer iteration.
+"""
 NCLSolve(nlp::AbstractNLPModel, args...; kwargs...) = NCLSolve(NCLModel(nlp), args...; kwargs...)
 
 function NCLSolve(
