@@ -5,10 +5,11 @@ import NLPModels: increment!
 export NCLModel
 
 """
-    NCLModel(nlp)
+    NCLModel(nlp; resid=0, resid_linear=true, ρ=1, y=fill(1, nr))
 
-Subtype of `AbstractNLPModel` designed to represent an NCL subproblem.
-A general problem of the form
+Create an `NCLModel` that wraps an `AbstractNLPModel` and appends residual variables for the NCL algorithm.
+
+A general constrained problem
 
     minimize   f(x)
     over       x
@@ -17,27 +18,51 @@ A general problem of the form
 
 is transformed into
 
-    minimize   f(x) + λ'r + ρ ‖r‖²
+    minimize   f(x) + y'r + (ρ/2) ‖r‖²
     over       x, r
     subject to lvar ≤ x ≤ uvar
                lcon ≤ c(x) + r ≤ ucon
 
-where λ is a vector of Lagrange multiplier estimates and ρ > 0 is a penalty parameter.
+where `r` is a vector of residual variables, `y` is a vector of Lagrange multiplier estimates,
+and `ρ > 0` is a penalty parameter.
 
-### Input arguments
+The resulting `NCLModel` satisfies the `AbstractNLPModel` interface, so it can be passed directly to any solver
+that supports the NLPModels API.
 
-* `nlp::AbstractNLPModel`  the original problem
+### Arguments
+
+* `nlp::AbstractNLPModel` — the original constrained optimization problem.
 
 ### Keyword arguments
 
-* `resid::Float64`  the initial residual value (default 0)
-* `resid_linear::Bool`  whether or not residuals are added to linear constraints
-* `ρ::Float64`  initial penalty parameter
-* `y::AbstractVector{Float64}`  initial Lagrange multiplier estimates
+* `resid::Real` — initial value for all residual variables (default: `0`).
+* `resid_linear::Bool` — if `true`, residuals are appended to all constraints (linear and nonlinear);
+  if `false`, residuals are appended to nonlinear constraints only (default: `true`).
+* `ρ::Real` — initial penalty parameter (default: `1`).
+* `y::AbstractVector{<:Real}` — initial Lagrange multiplier estimates (default: vector of ones with length `nr`).
 
 ### Return value
 
-* `ncl::NCLModel`  the transformed model.
+* `ncl::NCLModel`  the transformed model with `nvar = nx + nr`, where `nx` is the number of original
+  variables and `nr` is the number of residual variables (`get_ncon(nlp)` if `resid_linear`, `get_nnln(nlp)` otherwise).
+
+### Example
+
+```julia
+using ADNLPModels
+
+# minimize x₁ + x₂ s.t. x₁² + x₂ ≥ 1, x₁·x₂ ≤ 0.5, 0 ≤ xᵢ ≤ 1
+f(x) = x[1] + x[2]
+x0 = [0.5, 0.5]
+lvar = [0.0, 0.0]
+uvar = [1.0, 1.0]
+c(x) = [x[1]^2 + x[2], x[1] * x[2]]
+lcon = [1.0, -Inf]
+ucon = [Inf, 0.5]
+
+nlp = ADNLPModel(f, x0, lvar, uvar, c, lcon, ucon)
+ncl = NCLModel(nlp)
+```
 """
 mutable struct NCLModel{T, S, M} <: AbstractNLPModel{T, S} where {M <: AbstractNLPModel{T, S}}
   nlp::M
