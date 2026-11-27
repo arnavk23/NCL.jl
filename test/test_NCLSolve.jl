@@ -63,6 +63,32 @@ end
   @test isapprox(stats.objective, -(sqrt(5) - 1)^2, atol = 1.0e-4)
 end
 
+@testset "Constraint multipliers follow the JSO sign convention" begin
+  # Minimize ‖x - (2, 1)‖² subject to a constraint on ‖x‖², written in three equivalent ways.
+  f(x) = (x[1] - 2)^2 + (x[2] - 1)^2
+  lvar, uvar = [-10.0, -10.0], [10.0, 10.0]
+  models = [
+    ADNLPModel(f, [0.0, 0.0], lvar, uvar, x -> [x[1]^2 + x[2]^2], [-Inf], [1.0]),
+    ADNLPModel(f, [0.0, 0.0], lvar, uvar, x -> [1 - x[1]^2 - x[2]^2], [0.0], [Inf]),
+    ADNLPModel(
+      x -> -f(x),
+      [0.0, 0.0],
+      lvar,
+      uvar,
+      x -> [x[1]^2 + x[2]^2],
+      [-Inf],
+      [1.0];
+      minimize = false,
+    ),
+  ]
+  for model in models
+    stats = NCLSolve(model; verbose = false)
+    ref = ipopt(model; print_level = 0)
+    @test stats.status == :first_order
+    @test isapprox(stats.multipliers, ref.multipliers, rtol = 1.0e-4)
+  end
+end
+
 @testset "Declare infeasibility at max penalty" begin
   # x is fixed at 0, while x + r == 100 forces a persistent residual r = 100.
   f(x) = zero(eltype(x))
